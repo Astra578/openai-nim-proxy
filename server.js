@@ -111,10 +111,12 @@ app.post('/v1/chat/completions', async (req, res) => {
     });
     
     if (stream) {
+        if (stream) {
       // Handle streaming response with reasoning
       res.setHeader('Content-Type', 'text/event-stream');
       res.setHeader('Cache-Control', 'no-cache');
       res.setHeader('Connection', 'keep-alive');
+      res.setHeader('X-Accel-Buffering', 'no'); // 🔥 FIX 1: Impedisce a Cloudflare di bufferizzare e tagliare la risposta
       
       let buffer = '';
       let reasoningStarted = false;
@@ -127,7 +129,7 @@ app.post('/v1/chat/completions', async (req, res) => {
         lines.forEach(line => {
           if (line.startsWith('data: ')) {
             if (line.includes('[DONE]')) {
-              res.write(line + '\n');
+              res.write(line + '\n\n'); // 🔥 FIX 2: Doppio \n\n obbligatorio per chiudere l'evento SSE
               return;
             }
             
@@ -158,6 +160,29 @@ app.post('/v1/chat/completions', async (req, res) => {
                     data.choices[0].delta.content = combinedContent;
                     delete data.choices[0].delta.reasoning_content;
                   }
+                } else {
+                  if (content) {
+                    data.choices[0].delta.content = content;
+                  } else {
+                    data.choices[0].delta.content = '';
+                  }
+                  delete data.choices[0].delta.reasoning_content;
+                }
+              }
+              res.write(`data: ${JSON.stringify(data)}\n\n`); // Questo era già corretto!
+            } catch (e) {
+              res.write(line + '\n\n'); // 🔥 FIX 3: Doppio \n\n anche nel catch per non far bloccare lo stream se il JSON è sporco
+            }
+          }
+        });
+      });
+      
+      response.data.on('end', () => res.end());
+      response.data.on('error', (err) => {
+        console.error('Stream error:', err);
+        res.end();
+      });
+    }
                 } else {
                   if (content) {
                     data.choices[0].delta.content = content;
